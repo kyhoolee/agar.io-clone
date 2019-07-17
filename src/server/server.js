@@ -1,10 +1,14 @@
 /*jslint bitwise: true, node: true */
 'use strict';
 
+// 0.1. Web-framework
 var express = require('express');
 var app = express();
+// 0.2. Http-web-framework
 var http = require('http').Server(app);
+// 0.3. Socket-server
 var io = require('socket.io')(http);
+// 0.4. 2D-Collision-detection based on: Separating Axis Theorem
 var SAT = require('sat');
 var sql = require ("mysql");
 
@@ -20,18 +24,26 @@ var quadtree = require('simple-quadtree');
 //call sqlinfo
 var s = c.sqlinfo;
 
+// Quadtree to reduce number of collision checking
 var tree = quadtree(0, 0, c.gameWidth, c.gameHeight);
 
+// State.1. list of user
 var users = [];
+// State.2. list of mass-food - coming out from player
 var massFood = [];
+// State.3. list of food in game
 var food = [];
+// State.4. list of virus in game
 var virus = [];
+// Stats.5. map of socket by player
 var sockets = {};
-
+// State.6. top-player in leaderboard
 var leaderboard = [];
 var leaderboardChanged = false;
 
+// SAT-point
 var V = SAT.Vector;
+// SAT-circle - in this game-logic - only detect collision between circle
 var C = SAT.Circle;
 
 if(s.host !== "DEFAULT") {
@@ -54,6 +66,10 @@ var initMassLog = util.log(c.defaultPlayerMass, c.slowBase);
 
 app.use(express.static(__dirname + '/../client'));
 
+/**
+ * Add more food to game
+ * @param {number of food to add to game} toAdd 
+ */
 function addFood(toAdd) {
     var radius = util.massToRadius(c.foodMass);
     while (toAdd--) {
@@ -70,6 +86,10 @@ function addFood(toAdd) {
     }
 }
 
+/**
+ * Add more virus to game
+ * @param {number of virus to add to game} toAdd 
+ */
 function addVirus(toAdd) {
     while (toAdd--) {
         var mass = util.randomInRange(c.virus.defaultMass.from, c.virus.defaultMass.to, true);
@@ -88,27 +108,41 @@ function addVirus(toAdd) {
     }
 }
 
+/**
+ * Remove food
+ * @param {number of food to remove} toRem 
+ */
 function removeFood(toRem) {
     while (toRem--) {
         food.pop();
     }
 }
 
+/**
+ * Moving a player
+ * @param {moving player as movement-parameters} player 
+ */
 function movePlayer(player) {
     var x =0,y =0;
+    // 1. Moving all player-cells
     for(var i=0; i<player.cells.length; i++)
     {
+        // 1.0. the player.target attribute is the target vector from player to target-point
+        // 1.1. the target of this cell - calculate from the target of the player
         var target = {
             x: player.x - player.cells[i].x + player.target.x,
             y: player.y - player.cells[i].y + player.target.y
         };
+        // 1.2. distance from cell to target-point
         var dist = Math.sqrt(Math.pow(target.y, 2) + Math.pow(target.x, 2));
+        // 1.3. angle from cell to target-point
         var deg = Math.atan2(target.y, target.x);
+        // 1.4. moving velocity
         var slowDown = 1;
         if(player.cells[i].speed <= 6.25) {
             slowDown = util.log(player.cells[i].mass, c.slowBase) - initMassLog + 1;
         }
-
+        // 1.5. moving delta
         var deltaY = player.cells[i].speed * Math.sin(deg)/ slowDown;
         var deltaX = player.cells[i].speed * Math.cos(deg)/ slowDown;
 
@@ -125,10 +159,29 @@ function movePlayer(player) {
         if (!isNaN(deltaX)) {
             player.cells[i].x += deltaX;
         }
+
+
+        // 
+        /*
+        --> Should update this logic in future-dev
+        Consider player-cells from bigger mass to smaller mass 
+        moving the bigger-cell first
+        + other smaller cell can consider to merge to bigger cell 
+        if smaller cell merged --> remove from list --> not need to update move 
+        + compare the position to bigger cell - and also moving closer to bigger cell
+        do not use logic move close to every other cell
+        + the player position is the average position of all cells that not merged 
+        */
+        // 1.6. Make player-cells close to each other
+        // can build other solution - but this is a simple solution
+        // simply check all other-cells - then moving current cell a little bit to other cell
         // Find best solution.
         for(var j=0; j<player.cells.length; j++) {
             if(j != i && player.cells[i] !== undefined) {
-                var distance = Math.sqrt(Math.pow(player.cells[j].y-player.cells[i].y,2) + Math.pow(player.cells[j].x-player.cells[i].x,2));
+                var distance = Math.sqrt(
+                    Math.pow(player.cells[j].y-player.cells[i].y,2) + Math.pow(player.cells[j].x-player.cells[i].x,2)
+                    );
+
                 var radiusTotal = (player.cells[i].radius + player.cells[j].radius);
                 if(distance < radiusTotal) {
                     if(player.lastSplit > new Date().getTime() - 1000 * c.mergeTimer) {
@@ -151,6 +204,8 @@ function movePlayer(player) {
                 }
             }
         }
+
+        // 1.7. Make cell not move out of the border to much
         if(player.cells.length > i) {
             var borderCalc = player.cells[i].radius / 3;
             if (player.cells[i].x > c.gameWidth - borderCalc) {
@@ -169,10 +224,16 @@ function movePlayer(player) {
             y += player.cells[i].y;
         }
     }
+
+    // 1.8. Player position is the average position of all player-cells
     player.x = x/player.cells.length;
     player.y = y/player.cells.length;
 }
 
+/**
+ * Move a mass
+ * @param {a mass to move} mass 
+ */
 function moveMass(mass) {
     var deg = Math.atan2(mass.target.y, mass.target.x);
     var deltaY = mass.speed * Math.sin(deg);
@@ -205,6 +266,10 @@ function moveMass(mass) {
     }
 }
 
+/**
+ * Balance total mass in game 
+ * Consider to remove or add more food
+ */
 function balanceMass() {
     var totalMass = food.length * c.foodMass +
         users
@@ -216,6 +281,7 @@ function balanceMass() {
     var foodDiff = parseInt(massDiff / c.foodMass) - maxFoodDiff;
     var foodToAdd = Math.min(foodDiff, maxFoodDiff);
     var foodToRemove = -Math.max(foodDiff, maxFoodDiff);
+
 
     if (foodToAdd > 0) {
         //console.log('[DEBUG] Adding ' + foodToAdd + ' food to level!');
@@ -238,59 +304,95 @@ function balanceMass() {
 io.on('connection', function (socket) {
     console.log('A user connected!', socket.handshake.query.type);
 
+    // 1. Initialize player when new socket-connect
+    // --> Can update this logic in-future - check this socket is a reconnect or not
+    // --> Handle 2 cases: new-connect or reconnect
+    // 1.1 Player-type
     var type = socket.handshake.query.type;
+    // 1.2 Player init-radius
     var radius = util.massToRadius(c.defaultPlayerMass);
+    // 1.3 Player random init-position
     var position = c.newPlayerInitialPosition == 'farthest' ? util.uniformPosition(users, radius) : util.randomPosition(radius);
-
+    // 1.4 Player cell-list
     var cells = [];
     var massTotal = 0;
     if(type === 'player') {
+        // A cell of player
         cells = [{
+            // cell.1. mass
             mass: c.defaultPlayerMass,
+            // cell.2. position
             x: position.x,
             y: position.y,
+            // cell.3. radius
             radius: radius
         }];
+        // Total mass: total mass of player's cells
         massTotal = c.defaultPlayerMass;
     }
 
+    // 1.5 Player attribute
     var currentPlayer = {
+        // player.1. id = socket.id
         id: socket.id,
+        // player.2. postion 
         x: position.x,
         y: position.y,
+        // player.3. (width,height) of player
         w: c.defaultPlayerMass,
         h: c.defaultPlayerMass,
+        // player.5. cell-list of player 
         cells: cells,
+        // player.6. total-mass of player
         massTotal: massTotal,
+        // player.7. color of player 
         hue: Math.round(Math.random() * 360),
+        // player.8. type of player 
         type: type,
+        // player.9. last-heart-beat-timestamp of player
         lastHeartbeat: new Date().getTime(),
+        // player.10. moving-target of player
         target: {
             x: 0,
             y: 0
         }
     };
 
+
+    // Connect.2. 'Gotit' - client reply - got player-data from server
+    // Client send client-player-data to server
     socket.on('gotit', function (player) {
         console.log('[INFO] Player ' + player.name + ' connecting!');
 
+        
         if (util.findIndex(users, player.id) > -1) {
+            // Gotit.1. Check player alredy connected or not 
             console.log('[INFO] Player ID is already connected, kicking.');
             socket.disconnect();
         } else if (!util.validNick(player.name)) {
+            // Gotit.2. Check player-name valid or not
             socket.emit('kick', 'Invalid username.');
             socket.disconnect();
         } else {
+            // Gotit.3. Player-valid - join player to game-room
+            // Now there is only 1 global game-room
+            // In-future can create multiple rooms: lobby-room, game-rooms, many game-type
             console.log('[INFO] Player ' + player.name + ' connected!');
+
+            // 1. Assign socket
             sockets[player.id] = socket;
-
+            // 2. Assign radius
             var radius = util.massToRadius(c.defaultPlayerMass);
-            var position = c.newPlayerInitialPosition == 'farthest' ? util.uniformPosition(users, radius) : util.randomPosition(radius);
-
+            // 3. Assign position 
+            var position = c.newPlayerInitialPosition == 'farthest' ? 
+                util.uniformPosition(users, radius) 
+                : util.randomPosition(radius);
             player.x = position.x;
             player.y = position.y;
+            // 4. Assign target
             player.target.x = 0;
             player.target.y = 0;
+            // 5. Player-type: play or view
             if(type === 'player') {
                 player.cells = [{
                     mass: c.defaultPlayerMass,
@@ -304,13 +406,18 @@ io.on('connection', function (socket) {
                  player.cells = [];
                  player.massTotal = 0;
             }
+            // 6. Player-color
             player.hue = Math.round(Math.random() * 360);
+            
+            // 7. Assign currentPlayer of this socket to new player-data: combine with client-data
             currentPlayer = player;
+            // 7. Assign last-heart-beat
             currentPlayer.lastHeartbeat = new Date().getTime();
+            // 7. Append currentPlayer to player-list
             users.push(currentPlayer);
-
+            // 8. IO broadcast 'PlayerJoin' to ALL player in Game-room
             io.emit('playerJoin', { name: currentPlayer.name });
-
+            // 9. Socket send to client 'GameSetup' wit game-size
             socket.emit('gameSetup', {
                 gameWidth: c.gameWidth,
                 gameHeight: c.gameHeight
@@ -329,9 +436,13 @@ io.on('connection', function (socket) {
         currentPlayer.screenHeight = data.screenHeight;
     });
 
+    // Connect.1. Respawn is the starting step - first event from client
     socket.on('respawn', function () {
+        // Respawn.1. Remove player if exist in player-list before
         if (util.findIndex(users, currentPlayer.id) > -1)
             users.splice(util.findIndex(users, currentPlayer.id), 1);
+        // Respawn.2. Send 'Welcome' event from server 
+        // - with player-data initialized from server
         socket.emit('welcome', currentPlayer);
         console.log('[INFO] User ' + currentPlayer.name + ' respawned!');
     });
@@ -477,40 +588,67 @@ io.on('connection', function (socket) {
     });
 });
 
+/**
+ * Check all game-logic-condition for this player
+ * @param {the player to tick} currentPlayer 
+ */
 function tickPlayer(currentPlayer) {
+    /*
+    1. Kick timeout player
+    In-future can change to new logic
+    - Server: AFK-player - stay-idle
+    - Client: connection problem - try to reconnect
+    - Server: accept reconnect - renew-socket - update new state 
+    - Client: update newstate - continue playing
+    */
     if(currentPlayer.lastHeartbeat < new Date().getTime() - c.maxHeartbeatInterval) {
         sockets[currentPlayer.id].emit('kick', 'Last heartbeat received over ' + c.maxHeartbeatInterval + ' ago.');
         sockets[currentPlayer.id].disconnect();
     }
 
+    // 2. Move player 
     movePlayer(currentPlayer);
 
+    // Util.1. Check point in circle 
+    // --> Check player eat food success or not
+    // Consider food is a point with unit-size
     function funcFood(f) {
         return SAT.pointInCircle(new V(f.x, f.y), playerCircle);
     }
 
+    // Util.2. Delete food at position f
     function deleteFood(f) {
         food[f] = {};
         food.splice(f, 1);
     }
 
+    // Util.3. Check circle in circle by check center in circle 
+    // --> Check player eat other mass
     function eatMass(m) {
         if(SAT.pointInCircle(new V(m.x, m.y), playerCircle)){
+            // If this mass belong to player and still moving with player
             if(m.id == currentPlayer.id && m.speed > 0 && z == m.num)
                 return false;
-            if(currentCell.mass > m.masa * 1.1)
+            // Else this mass is free to eat and can be eat by check mass
+            if(currentCell.mass > m.mass * 1.1)
                 return true;
         }
         return false;
     }
 
+    // Util.3. Check ?
     function check(user) {
         for(var i=0; i<user.cells.length; i++) {
             if(user.cells[i].mass > 10 && user.id !== currentPlayer.id) {
                 var response = new SAT.Response();
-                var collided = SAT.testCircleCircle(playerCircle,
-                    new C(new V(user.cells[i].x, user.cells[i].y), user.cells[i].radius),
-                    response);
+                var collided = SAT.testCircleCircle(
+                    playerCircle,
+                    new C(
+                        new V(user.cells[i].x, user.cells[i].y), 
+                        user.cells[i].radius
+                        ),
+                    response
+                    );
                 if (collided) {
                     response.aUser = currentCell;
                     response.bUser = {
@@ -528,6 +666,10 @@ function tickPlayer(currentPlayer) {
         return true;
     }
 
+    /**
+     * 
+     * @param {*} collision 
+     */
     function collisionCheck(collision) {
         if (collision.aUser.mass > collision.bUser.mass * 1.1  && collision.aUser.radius > Math.sqrt(Math.pow(collision.aUser.x - collision.bUser.x, 2) + Math.pow(collision.aUser.y - collision.bUser.y, 2))*1.75) {
             console.log('[DEBUG] Killing user: ' + collision.bUser.id);
@@ -549,6 +691,7 @@ function tickPlayer(currentPlayer) {
             collision.aUser.mass += collision.bUser.mass;
         }
     }
+
 
     for(var z=0; z<currentPlayer.cells.length; z++) {
         var currentCell = currentPlayer.cells[z];
@@ -603,19 +746,27 @@ function tickPlayer(currentPlayer) {
     }
 }
 
+// Loop.1. Move-loop: make the game-object moving as movement-parameters
 function moveloop() {
+    // 1. Tick all player - because only player moving - tick other if we make other object move 
     for (var i = 0; i < users.length; i++) {
         tickPlayer(users[i]);
     }
+    // 2. Mass-food: the mass-food coming out from player - move them if they are still moving
     for (i=0; i < massFood.length; i++) {
-        if(massFood[i].speed > 0) moveMass(massFood[i]);
+        if(massFood[i].speed > 0) {
+            moveMass(massFood[i]);
+        }
     }
 }
 
+// Loop.2. Game-loop: 
 function gameloop() {
     if (users.length > 0) {
+        // 1. Build leaderboard
+        // 1.1. Sort user by massTotal
         users.sort( function(a, b) { return b.massTotal - a.massTotal; });
-
+        // 1.2. Build top-user by massTotal
         var topUsers = [];
 
         for (var i = 0; i < Math.min(10, users.length); i++) {
@@ -626,6 +777,7 @@ function gameloop() {
                 });
             }
         }
+        // 1.3. Check leaderboard is changed or not AND update leaderboard
         if (isNaN(leaderboard) || leaderboard.length !== topUsers.length) {
             leaderboard = topUsers;
             leaderboardChanged = true;
@@ -639,6 +791,8 @@ function gameloop() {
                 }
             }
         }
+
+        // 2. Make user lose mass
         for (i = 0; i < users.length; i++) {
             for(var z=0; z < users[i].cells.length; z++) {
                 if (users[i].cells[z].mass * (1 - (c.massLossRate / 1000)) > c.defaultPlayerMass && users[i].massTotal > c.minMassLoss) {
@@ -649,15 +803,25 @@ function gameloop() {
             }
         }
     }
+
+    // 3. Balance mass in game
     balanceMass();
 }
 
+// Loop.3. Network-loop
 function sendUpdates() {
+    // Send update for each user
     users.forEach( function(u) {
+        // 1. Check the position of the playing-view - focus around player-position
+        // If this is spectator --> then focus on the center of the game-map
         // center the view if x/y is undefined, this will happen for spectators
         u.x = u.x || c.gameWidth / 2;
         u.y = u.y || c.gameHeight / 2;
 
+        // 2. Check if this game-object should send update to the client or not 
+        // --> Send-update iff game-object in the player-view
+
+        // 2.1. Visible-food
         var visibleFood  = food
             .map(function(f) {
                 if ( f.x > u.x - u.screenWidth/2 - 20 &&
@@ -669,6 +833,7 @@ function sendUpdates() {
             })
             .filter(function(f) { return f; });
 
+        // 2.2. Visible-virus    
         var visibleVirus  = virus
             .map(function(f) {
                 if ( f.x > u.x - u.screenWidth/2 - f.radius &&
@@ -679,7 +844,8 @@ function sendUpdates() {
                 }
             })
             .filter(function(f) { return f; });
-
+        
+        // 2.3. Visible-food
         var visibleMass = massFood
             .map(function(f) {
                 if ( f.x+f.radius > u.x - u.screenWidth/2 - 20 &&
@@ -691,6 +857,7 @@ function sendUpdates() {
             })
             .filter(function(f) { return f; });
 
+        // 2.4. Visible-cells - other player
         var visibleCells  = users
             .map(function(f) {
                 for(var z=0; z<f.cells.length; z++)
@@ -712,6 +879,7 @@ function sendUpdates() {
                             };
                         } else {
                             //console.log("Nombre: " + f.name + " Es Usuario");
+                            // Return only needed data of the cells - remove other server-logic data
                             return {
                                 x: f.x,
                                 y: f.y,
@@ -725,7 +893,13 @@ function sendUpdates() {
             })
             .filter(function(f) { return f; });
 
+        // 3. Socket emit event 'serverTellPlayerMove' with data to update
+        // visible-Cells
+        // visible-Food
+        // visible-Mass
+        // visible-Virus
         sockets[u.id].emit('serverTellPlayerMove', visibleCells, visibleFood, visibleMass, visibleVirus);
+        // 3.1. If leaderboard-changed - then emit 'leaderboard' with leaderboard-data
         if (leaderboardChanged) {
             sockets[u.id].emit('leaderboard', {
                 players: users.length,
@@ -733,11 +907,16 @@ function sendUpdates() {
             });
         }
     });
+
     leaderboardChanged = false;
 }
 
+// Connect.4. Start the main-logic-loop
+// Loop.1. Physic-movement-loop
 setInterval(moveloop, 1000 / 60);
+// Loop.2. Game-logic-loop
 setInterval(gameloop, 1000);
+// Loop.3. Network-update-loop
 setInterval(sendUpdates, 1000 / c.networkUpdateFactor);
 
 // Don't touch, IP configurations.

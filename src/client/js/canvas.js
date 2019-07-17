@@ -9,6 +9,8 @@ class Canvas {
         this.directions = [];
         var self = this;
 
+        // Canvas elemtn in HTML file: 
+        // <canvas tabindex="1" id="cvs"></canvas>
         this.cv = document.getElementById('cvs');
         this.cv.width = global.screenWidth;
         this.cv.height = global.screenHeight;
@@ -116,6 +118,7 @@ class Canvas {
     }
 
     gameInput(mouse) {
+        // Target is the distance of x and distance of y that the object need to finish
     	if (!this.directionLock) {
     		this.parent.target.x = mouse.clientX - this.width / 2;
     		this.parent.target.y = mouse.clientY - this.height / 2;

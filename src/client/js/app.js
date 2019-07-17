@@ -140,6 +140,7 @@ continuitySetting.onchange = settings.toggleContinuity;
 var roundFoodSetting = document.getElementById('roundFood');
 roundFoodSetting.onchange = settings.toggleRoundFood;
 
+// Browser canvas
 var c = window.canvas.cv;
 var graph = c.getContext('2d');
 
@@ -174,7 +175,9 @@ function setupSocket(socket) {
     });
 
     // Handle connection.
+    // Connect.1. 'Welcome' - First event receive from server
     socket.on('welcome', function (playerSettings) {
+        // Welcome.1. Receive player-data from server
         player = playerSettings;
         player.name = global.playerName;
         player.screenWidth = global.screenWidth;
@@ -182,17 +185,26 @@ function setupSocket(socket) {
         player.target = window.canvas.target;
         global.player = player;
         window.chat.player = player;
+        
+        // Welcome.2. Send event 'Gotit' to server - with client-player-data
         socket.emit('gotit', player);
+
+        // Welcome.3. Start the game in the client-side
         global.gameStart = true;
         debug('Game started at: ' + global.gameStart);
         window.chat.addSystemLine('Connected to the game!');
         window.chat.addSystemLine('Type <b>-help</b> for a list of commands.');
+
+        // Remove chatbox-element if platform is mobile
         if (global.mobile) {
-            document.getElementById('gameAreaWrapper').removeChild(document.getElementById('chatbox'));
+            document.getElementById('gameAreaWrapper')
+                .removeChild(document.getElementById('chatbox'));
         }
+        // Canvas focus
 		c.focus();
     });
 
+    // Connect.2. 'GameSetup' - server send client game-size
     socket.on('gameSetup', function(data) {
         global.gameWidth = data.gameWidth;
         global.gameHeight = data.gameHeight;
@@ -211,6 +223,8 @@ function setupSocket(socket) {
         window.chat.addSystemLine('{GAME} - <b>' + (data.name.length < 1 ? 'An unnamed cell' : data.name) + '</b> joined.');
     });
 
+    // Connect.4.NetworkLoop
+    // Event 'leaderboard' - update data on leaderboard
     socket.on('leaderboard', function (data) {
         leaderboard = data.leaderboard;
         var status = '<span class="title">Leaderboard</span>';
@@ -241,7 +255,8 @@ function setupSocket(socket) {
         window.chat.addChatLine(data.sender, data.message, false);
     });
 
-    // Handle movement.
+    // Connect.3.Network-loop
+    // Event 'serverTellPlayerMove' - Handle position-update of game-object visible in player-view
     socket.on('serverTellPlayerMove', function (userData, foodsList, massList, virusList) {
         var playerData;
         for(var i =0; i< userData.length; i++) {
